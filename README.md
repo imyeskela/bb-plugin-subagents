@@ -7,7 +7,8 @@ other projects or conversations.
 
 - Active native delegations from the current chat, plus child and nested BB threads.
 - Live active/idle/error/needs-input status.
-- Provider, model, and reasoning level beside every agent.
+- Provider beside every agent; model and reasoning settings for child BB threads.
+- Model and reasoning omitted when the SDK does not report them.
 - Hidden worker threads included.
 - Auto-refresh while the chat is open.
 - Read-only transcript for provider-native subagents.

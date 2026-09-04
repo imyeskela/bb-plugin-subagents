@@ -14,6 +14,31 @@ type ThreadTimelineResult = Awaited<
   ReturnType<BbPluginApi["sdk"]["threads"]["timeline"]>
 >;
 type TimelineRow = ThreadTimelineResult["rows"][number];
+type DelegationRow = Extract<TimelineRow, { kind: "work"; workKind: "delegation" }>;
+
+function delegation(id: string, childRows: TimelineRow[] = []): DelegationRow {
+  return {
+    id,
+    kind: "work",
+    workKind: "delegation",
+    status: "pending",
+    createdAt: 10,
+    startedAt: 10,
+    sourceSeqStart: 1,
+    sourceSeqEnd: 4,
+    threadId: "root",
+    turnId: "turn-1",
+    callId: id,
+    toolName: "delegation",
+    childRef: id,
+    background: false,
+    subagentType: "worker",
+    description: id,
+    output: "",
+    completedAt: null,
+    childRows,
+  };
+}
 
 function timeline(rows: TimelineRow[]): ThreadTimelineResult {
   return {
@@ -141,7 +166,7 @@ describe("Subagents backend", () => {
     await harness.lifecycle.dispose();
   });
 
-  it("lists active native delegations from the current thread timeline", async () => {
+  it("lists native delegations without attributing the root's execution settings to them", async () => {
     const root = makeThreadResponse({
       id: "root",
       projectId: "project-1",
@@ -214,7 +239,7 @@ describe("Subagents backend", () => {
           kind: "delegation",
           relationship: "delegation",
           chatThreadId: null,
-          execution: expect.objectContaining({ model: "gpt-5.6-sol" }),
+          execution: null,
           messages: [
             expect.objectContaining({
               role: "assistant",
@@ -222,6 +247,39 @@ describe("Subagents backend", () => {
             }),
           ],
         }),
+      ],
+      truncated: false,
+    });
+    expect(harness.inspection.sdk.callsTo("threads.defaultExecutionOptions")).toEqual([]);
+    await harness.lifecycle.dispose();
+  });
+
+  it("preserves native delegation parents independently of their names", async () => {
+    const nested = delegation("ssrf sandbox review");
+    const backend = delegation("backend review", [nested]);
+    const frontend = delegation("frontend review");
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "subagents",
+      sdk: {
+        threads: {
+          list: async () => [],
+          timeline: async () => timeline([backend, frontend]),
+          get: async () => makeThreadResponse({ id: "root" }),
+          defaultExecutionOptions: async () => null,
+        },
+      },
+    });
+    await plugin(bb);
+
+    const result = await harness.behavior.callRpc("subagents_list", {
+      rootThreadId: "root",
+    });
+
+    expect(result).toEqual({
+      agents: [
+        expect.objectContaining({ id: backend.id, parentThreadId: "root" }),
+        expect.objectContaining({ id: nested.id, parentThreadId: backend.id }),
+        expect.objectContaining({ id: frontend.id, parentThreadId: "root" }),
       ],
       truncated: false,
     });

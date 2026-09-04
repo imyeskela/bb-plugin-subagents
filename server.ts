@@ -105,14 +105,15 @@ async function enrichThreadSubagent(
 
 function visitRows(
   rows: readonly TimelineRow[],
-  visitor: (row: TimelineRow) => void,
+  visitor: (row: TimelineRow, parentDelegationId: string | null) => void,
+  parentDelegationId: string | null = null,
 ): void {
   for (const row of rows) {
-    visitor(row);
+    visitor(row, parentDelegationId);
     if (row.kind === "turn" && row.children !== null) {
-      visitRows(row.children, visitor);
+      visitRows(row.children, visitor, parentDelegationId);
     } else if (row.kind === "work" && row.workKind === "delegation") {
-      visitRows(row.childRows, visitor);
+      visitRows(row.childRows, visitor, row.id);
     }
   }
 }
@@ -166,7 +167,8 @@ async function readNativeSubagents(
   }
 
   const byId = new Map<string, DelegationRow>();
-  visitRows(timeline.rows, (row) => {
+  const parentById = new Map<string, string>();
+  visitRows(timeline.rows, (row, parentDelegationId) => {
     if (row.kind !== "work" || row.workKind !== "delegation") return;
     const previous = byId.get(row.id);
     const rowIsTerminal = row.status !== "pending";
@@ -177,6 +179,7 @@ async function readNativeSubagents(
       (rowIsTerminal === previousIsTerminal && row.sourceSeqEnd >= previous.sourceSeqEnd)
     ) {
       byId.set(row.id, row);
+      parentById.set(row.id, parentDelegationId ?? rootThreadId);
     }
   });
 
@@ -185,10 +188,7 @@ async function readNativeSubagents(
     .sort((left, right) => right.startedAt - left.startedAt);
   if (active.length === 0) return { agents: [], truncated: false };
 
-  const [root, execution] = await Promise.all([
-    bb.sdk.threads.get({ threadId: rootThreadId }),
-    readExecution(bb, rootThreadId),
-  ]);
+  const root = await bb.sdk.threads.get({ threadId: rootThreadId });
   const agents = active.slice(0, MAX_NATIVE_SUBAGENTS).map((row): Subagent => {
     const messages = readMessages(row);
     const updatedAt = Math.max(
@@ -201,7 +201,7 @@ async function readNativeSubagents(
       chatThreadId: null,
       messages,
       projectId: root.projectId,
-      parentThreadId: rootThreadId,
+      parentThreadId: parentById.get(row.id) ?? rootThreadId,
       relationship: "delegation",
       title: delegationTitle(row),
       titleFallback: row.subagentType,
@@ -213,7 +213,9 @@ async function readNativeSubagents(
       activeBackgroundAgentCount: 0,
       createdAt: row.startedAt,
       updatedAt,
-      execution,
+      // Native delegation rows do not expose execution metadata. The root's
+      // defaults do not describe a subagent that may use a different model.
+      execution: null,
     };
   });
   return {

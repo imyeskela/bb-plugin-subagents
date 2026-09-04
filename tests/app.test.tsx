@@ -54,6 +54,7 @@ describe("Subagents app", () => {
       title: "check api",
       status: "pending",
       displayStatus: "active",
+      execution: null,
       messages: [
         {
           id: "message-1",
@@ -76,6 +77,9 @@ describe("Subagents app", () => {
     expect(await panel.findByText("Checking the API now.")).toBeTruthy();
     expect(panel.queryByTestId("bb-thread-chat")).toBeNull();
     expect(panel.getByText("Read-only native subagent transcript")).toBeTruthy();
+    expect(panel.queryByText("Model and reasoning unavailable")).toBeNull();
+    expect(panel.queryByText("gpt-5.6-sol")).toBeNull();
+    expect(panel.queryByText("high")).toBeNull();
     panel.lifecycle.unmount();
   });
 
@@ -116,6 +120,48 @@ describe("Subagents app", () => {
         "child-2",
       );
     });
+    panel.lifecycle.unmount();
+  });
+
+  it("groups native subagents under their parent with an indent and counts all three", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    const native = (id: string, overrides: Partial<Subagent> = {}) =>
+      subagent(id, {
+        kind: "delegation",
+        chatThreadId: null,
+        relationship: "delegation",
+        status: "pending",
+        displayStatus: "active",
+        ...overrides,
+      });
+    const panel = renderSlot(
+      app.threadPanelActions[0]!,
+      { threadId: "root", params: null },
+      {
+        rpc: {
+          subagents_list: () => ({
+            agents: [
+              native("ssrf sandbox review", { parentThreadId: "backend review", updatedAt: 3 }),
+              native("frontend review", { updatedAt: 2 }),
+              native("backend review"),
+            ],
+            truncated: false,
+          }),
+        },
+      },
+    );
+
+    expect(await panel.findByText("3 active · 3 total")).toBeTruthy();
+    const rows = panel.getAllByRole("option");
+    expect(rows.map((row) => row.textContent?.split("native")[0])).toEqual([
+      "frontend review", "backend review", "ssrf sandbox review",
+    ]);
+    expect(rows[0]!.style.paddingLeft).toBe(rows[1]!.style.paddingLeft);
+    expect(parseInt(rows[2]!.style.paddingLeft)).toBeGreaterThan(
+      parseInt(rows[1]!.style.paddingLeft),
+    );
+    fireEvent.click(rows[2]!);
+    expect(rows[2]!.getAttribute("aria-selected")).toBe("true");
     panel.lifecycle.unmount();
   });
 
